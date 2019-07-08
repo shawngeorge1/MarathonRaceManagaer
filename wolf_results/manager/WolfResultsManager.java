@@ -345,3 +345,102 @@ def print_leaf(counts):
     return probs
 
 print(print_leaf(classify([0, 1, 0, 1, 1, 'Low', 1, 0, 1], my_tree)))
+
+		
+		
+		
+		import requests as rq 
+from pymongo import MongoClient
+import helpers
+
+#example request
+# https://api.betterdoctor.com/2016-03-01/doctors?first_name=Renee&last_name=Johnson&location=nc-cary&gender=female&skip=0&limit=1&user_key=2ef422483448d1d77aa8dc1c18aa4f16
+
+
+
+# This method pulls together the functionalities of the following to methods, getDoctor and isCovered, 
+# providing a single method call to incorporate information on if requested doctors are covered or not 
+# by the plans that will be presented
+# param personData: This is the json sent with information about the user. Contains list of doctors and their names. 
+# param responseInfo: This is a json object with the plans that will be presented to the user. The information about 
+# if doctors are covered is added.
+# param db: This is the db, which is used to get zipcode information
+def getDoctorsAreCovered(personData, responseInfo, db):
+    doctors = []
+    for provider in personData['providers']:
+        doctors.append(getDoctor(provider['first'], provider['last'], personData['zip'], db, 1))
+    responseInfo['plans'] = isCovered(doctors, responseInfo['plans'])
+
+    return responseInfo
+
+
+# This gets a specified amount of doctors by pinging the betterDoctor API
+# param fName: This is the first name of the doctor being searched for
+# param lName: This is the last name of the doctor being searched for
+# param zip: This is an int zipcode of the user using the front end
+# param limit: This is the max number of doctors you want returned by the search
+# return a list of doctors that fit the specified criteria
+def getDoctor(fName, lName, zip, db, limit):
+
+    #the end of the api url regardless of parameters. Has user code, number of wanted results and number to be skipped
+    skipAndLimit = '&skip=0&limit=1'
+    
+    apiKey = '&user_key=2ef422483448d1d77aa8dc1c18aa4f16'
+
+    apiURL = 'https://api.betterdoctor.com/2016-03-01/doctors?'
+
+    first_name = 'first_name=' + fName
+    last_name = 'last_name=' + lName
+
+   
+    zipInfo = db['zip'].find_one({"zip": zip})
+    loc_slug = zipInfo['state_id'] + '-' + zipInfo['city']
+    loc_slug = loc_slug.lower()
+
+    location = 'location=' + loc_slug
+
+    requestURL = apiURL + first_name + '&' + last_name + '&' + location + skipAndLimit + str(limit) + apiKey
+    response = rq.get(requestURL).json()
+    
+    #print(response)
+    ''' 
+    if len(response['data']) == 0 \ 
+        or (response['data'][0]['profile']['first_name'] != fName \
+            & response['data'][0]['profile']['last_name']) != lName
+        response['exists'] = False
+        response['first_name'] = fName
+        response['last_name'] = lName
+    '''
+
+    return response
+
+# take in an array of the wanted doctors and see which plans they are covered by
+# Cross checks the plans the doctors takes with the name of the provider and the type of the plans in the plans object
+def isCovered(doctors, plans):
+
+    for plan in plans:
+        plan['Doctors'] = {}
+        for doctor in doctors:
+            doctorName = doctor['data'][0]['profile']['first_name'] + ' ' + doctor['data'][0]['profile']['last_name']
+            plan['Doctors'][doctorName] = 'Not Covered'
+
+ 
+ #Checking all the insurances with the plans to see if each doctor is covered
+    for doctor in doctors:
+        doctorName = doctor['data'][0]['profile']['first_name'] + ' ' + doctor['data'][0]['profile']['last_name']
+        for insurance in doctor['data'][0]['insurances']:
+            for plan in plans:
+                if insurance['insurance_plan']['name'].find(plan['Plan Type']) > -1 \
+                & plan['Issuer Name'].find(insurance['insurance_provider']['name']) > -1:
+                    plan['Doctors'][doctorName] = 'Covered'
+                    print(plan['Issuer Name'])
+    return plans
+
+'''
+client = MongoClient('localhost', 27017)
+db = client['admin']
+db.authenticate('admin', 'VDXmqmjt50PCbY0E')
+doctors = [getDoctors('Renee', 'Johnson', 27519, db), getDoctors('Bindit', 'Patel', 27519, db)]
+plans = helpers.get_plans('HMO', 'Bronze', '27519', client)
+result = isCovered(doctors, plans)
+print(result)
